@@ -1,31 +1,33 @@
 import torch
-from torch import nn, Tensor
+from torch import nn
 from torch.nn import functional as F
 from src.trainers import BaseTrainer
 from src.configs import DPOConfig
-from typing import Iterable, List, Union, Tuple
+from typing import Union, Tuple
 from src.models import get_model
 from src.utils import pad_to_length
+from torch.utils.data import DataLoader
 
 class DPOTrainer(BaseTrainer):
     def __init__(self,
                  model,
-                 optimizer:Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR],
-                 loaders:Union[Tuple[Iterable], Iterable],
-                 train_config:DPOConfig):
+                 loaders:Union[Tuple[DataLoader], DataLoader],
+                 train_config:DPOConfig,
+                 ):
         super().__init__(
             model = model,
             loaders = loaders,
-            config = train_config,
-            optimizer=optimizer
+            args = train_config,
         )
-        self.config = train_config
-        if not self.config.ref_model:
+        self.args = train_config
+        if not self.args.ref_model:
             self.ref_model = get_model(self.model.model_name, size=self.model.model_size)().eval()
         else:
-            self.ref_model = get_model(self.config.ref_model, size=self.model.model_size)().eval()
+            self.ref_model = get_model(self.args.ref_model, size=self.model.model_size)().eval()
+
 
         self.pad_token_id = self.model.pad_token_id
+
 
     def concatenated_inputs(self, batch, padding_value:int = None) -> dict:
         if not padding_value:
@@ -145,24 +147,20 @@ class DPOTrainer(BaseTrainer):
                  ref_rejected_logps:torch.FloatTensor,
                  loss_type:str = 'sigmoid',
                  model_output:dict = None) -> tuple:
-        device = chosen_logps.device
-
-        chosen_logratios = chosen_logps - ref_chosen_logps
-        rejected_logratios = rejected_logps = ref_rejected_logps
 
         logratios = chosen_logps - rejected_logps
         ref_logratios = ref_chosen_logps - ref_rejected_logps
 
         logits = logratios - ref_logratios
 
-        label_smoothining = self.config.label_smoothing
+        assert loss_type == 'sigmoid', 'Only sigmoid is currently supported'
         losses = (
-                -F.logsigmoid(self.config.beta * logits) * (1 - self.label_smoothing)
-                - F.logsigmoid(-self.config.beta * logits) * self.label_smoothing
+                -F.logsigmoid(self.args.beta * logits) * (1 - self.args.label_smoothing)
+                - F.logsigmoid(-self.args.beta * logits) * self.args.label_smoothing
             )
 
-        chosen_rewards = self.beta * (chosen_logps) - ref_chosen_logps.detach()
-        rejected_rewards = self.beta * (rejected_logps) - ref_rejected_logps.detach()
+        chosen_rewards = (self.args.beta * chosen_logps) - ref_chosen_logps.detach()
+        rejected_rewards = (self.args.beta * rejected_logps) - ref_rejected_logps.detach()
 
         return losses, chosen_rewards, rejected_rewards
 
@@ -171,13 +169,13 @@ class DPOTrainer(BaseTrainer):
         metrics = {}
 
         if batch:
-            model_output = self.concatenated_forward(batch, is_ref_model = False)
+            model_output = self.concatenated_forward(batch, is_ref_model = False) #pass one
         else:
             if model_output is None:
                 raise ValueError('Either batch or model_output must be provided')
 
         with torch.no_grad():
-            ref_chosen_logps, ref_rejected_logps = self.compute_ref_log_probs(batch)
+            ref_chosen_logps, ref_rejected_logps = self.compute_ref_log_probs(batch) # pass two
 
 
 
@@ -191,7 +189,6 @@ class DPOTrainer(BaseTrainer):
 
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
-        #todo: all gather metrics accross devices
         metrics[f'{mode}/rewards/chosen'] = chosen_rewards.mean().item()
         metrics[f'{mode}/rewards/rejected'] = rejected_rewards.mean().item()
         metrics[f'{mode}/rewards/accuracy'] = reward_accuracies.mean().item()
@@ -211,21 +208,18 @@ class DPOTrainer(BaseTrainer):
         metrics[f'{mode}/loss'] = losses.mean().item()
         return losses.mean(), metrics
 
-    def compute_loss(self,model = None, batch = None, mode = 'valid',return_outputs = False, num_items_in_batch = None,logits:torch.FloatTensor = None, labels:torch.LongTensor = None):
-        loss, metrics = self.compute_metrics(model = model, batch = batch, mode = mode)
-        if return_outputs:
-            return loss, metrics
+
+    def train_step(self, batch):
+        loss, metrics = self.compute_metrics(batch = batch)
+        #todo: logging to wandb or csv,
+        self.log(metrics)
         return loss
 
-
-
-
-
-
-
-
-
-
+    def validation_step(self, batch):
+        with torch.no_grad():
+            loss, metrics = self.compute_metrics(batch = batch, mode = 'valid')
+        self.log(metrics)
+        return loss
 
 
 
