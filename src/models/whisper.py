@@ -12,9 +12,10 @@ from typing import List, Optional
 from torch import Tensor
 
 model_sizes = {
+    'tiny':'openai/whisper-tiny',
     'small':'openai/whisper-small',
     'medium':'openai/whisper-medium',
-    'large': 'openai/whisper-large'
+    'large': 'openai/whisper-large-v3'
 }
 class WhisperModel(ASRBaseModel):
     def __init__(self, size:str):
@@ -23,7 +24,7 @@ class WhisperModel(ASRBaseModel):
             raise ValueError(f'Invalid model size {size}, choose from small, medium, large')
 
         self.model = WhisperForConditionalGeneration.from_pretrained(model_sizes[size],
-                                                                     attn_implementation = 'flash_attention_2')
+                                                                     attn_implementation = 'sdpa')
         self.feature_extractor = AutoFeatureExtractor.from_pretrained(model_sizes[size])
         self.tokenizer = AutoTokenizer.from_pretrained(model_sizes[size])
 
