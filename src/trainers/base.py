@@ -3,7 +3,7 @@ import torch
 from abc import ABC, abstractmethod
 from torch import nn
 from src.models import ASRBaseModel
-from typing import Iterable, Union, Tuple, Literal
+from typing import  Union, Tuple, Literal
 from src.configs import DPOConfig as DPOArguments
 from src.trainers import OPTIMIZERS, SCHEDULERS
 
@@ -11,6 +11,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+from src.loggers import WandbLogger, CSVLogger
 
 
 def _build_distributed_loader(loader: DataLoader, mode="train"):
@@ -34,6 +35,7 @@ class BaseTrainer(ABC):
                  args:DPOArguments,
                  ):
         super().__init__()
+
         self.global_batch_size = None
         self.test_loader = None
         self.valid_loader = None
@@ -46,6 +48,8 @@ class BaseTrainer(ABC):
         self.raw_loaders = loaders
         self.optimizer = None
         self.scheduler = None
+        self.scaler = None
+        self.logger = None
         self.cur_epoch = 0
         self.cur_step = 0
         self.gpu_id = int(os.environ.get("LOCAL_RANK", "0"))
@@ -60,6 +64,11 @@ class BaseTrainer(ABC):
 
     @abstractmethod
     def validation_step(self, batch):
+        pass
+
+    @abstractmethod
+    def compute_metrics(self, model: nn.Module = None, batch=None, model_output=None,
+                        mode: Literal['train', 'valid', 'test'] = 'valid') -> dict:
         pass
     
     
@@ -103,29 +112,46 @@ class BaseTrainer(ABC):
         pass
 
     def log(self, logs:dict) -> None:
-        #todo: users should decide the logs to be in the loader
-        pass
+        self.logger.log_metrics(logs, step = self.cur_step)
+
+    def log_audio(self, audios:list, captions:list) -> None:
+        self.logger.log_audio_artifacts(audios, captions, step = self.cur_step, sample_rate = 16000)
 
     def configure_model_and_optimizer(self):
-        torch.cuda.set_device(self.gpu_id)
-        self.device = torch.device(f"cuda:{self.gpu_id}")
+        if torch.cuda.is_available() and self.args.accelerator in ['gpu','auto']:
+            torch.cuda.set_device(self.gpu_id)
+            self.device = torch.device(f"cuda:{self.gpu_id}")
 
-        self.model = self.raw_model.to(self.device)
-        self.model = DDP(self.model, device_ids = [self.gpu_id])
+            self.model = self.raw_model.to(self.device)
+            self.model = DDP(self.model, device_ids = [self.gpu_id])
 
-        if self.ref_model:
-            self.ref_model = self.ref_model.to(self.device)
-            self.ref_model = DDP(self.ref_model, device_ids = [self.gpu_id])
-            for param in self.ref_model.parameters():
-                param.requires_grad = False
+            if self.ref_model:
+                self.ref_model = self.ref_model.to(self.device)
+                self.ref_model = DDP(self.ref_model, device_ids = [self.gpu_id])
+                for param in self.ref_model.parameters():
+                    param.requires_grad = False
+        else:
+            self.device = torch.device("cpu")
+            self.model = self.raw_model.to(self.device)
+            self.model = DDP(self.model)
+            if self.ref_model:
+                self.ref_model = self.ref_model.to(self.device)
+                self.ref_model = DDP(self.ref_model)
+                for param in self.ref_model.parameters():
+                    param.requires_grad = False
 
         del self.raw_model
 
         optimizer_cls = OPTIMIZERS[self.args.optimizer]
         scheduler_cls = SCHEDULERS[self.args.scheduler]
 
-        optimizer = optimizer_cls(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay,
-                                  fused=True)
+        opt_kwargs = {
+            'lr': self.args.lr,
+            'weight_decay': self.args.weight_decay,
+            'fused': True if self.device.type == 'cuda' else False
+        }
+
+        optimizer = optimizer_cls(self.model.parameters(), **opt_kwargs)
 
         if self.args.scheduler in ['cosine_warmup']:
             assert self.args.warmup_steps > 0, 'Warmup steps must be > 0 for cosine scheduler'
@@ -152,12 +178,13 @@ class BaseTrainer(ABC):
         else:
             raise ValueError(f'Unknown scheduler {self.args.scheduler}')
 
+        if self.args.precision == 'bf16_mixed':
+            self.scaler = torch.cuda.amp.GradScaler()
+
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-    @abstractmethod
-    def compute_metrics(self, model:nn.Module = None, batch = None, model_output = None,mode:Literal['train', 'valid', 'test'] = 'valid') -> dict:
-        pass
+
 
     def setup_train_dataloader(self, train_loader):
         if not hasattr(train_loader, "__iter__"):
@@ -172,13 +199,22 @@ class BaseTrainer(ABC):
     def _run_batch(self, batch, batch_idx = None):
         self.optimizer.zero_grad()
         loss = self.train_step(batch)
-        loss.backward()
-        self.optimizer.step()
+        if self.scaler:
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            self.optimizer.step()
+
         if self.scheduler:
             self.scheduler.step()
+        print(f"Epoch {self.cur_epoch} Step {self.cur_step} Loss {loss.item():.4f}")
 
     def _run_eval_batch(self, batch, batch_idx = None):
         loss = self.validation_step(batch)
+
+        print(f"Validation Step {batch_idx} Loss {loss.item():.4f}")
         return loss
 
     def _run_epoch(self):
@@ -206,12 +242,20 @@ class BaseTrainer(ABC):
                 self._run_eval_batch(val_batch, batch_idx = val_index)
         self.model.train()
 
+    def _configure_logger(self):
+        if self.args.log_to == 'wandb':
+            self.logger = WandbLogger(self.args)
+        else:
+            self.logger = CSVLogger(self.args)
+        self.logger.init_and_log_args(self.args)
+
     def train(self):
 
         if self.args.accelerator == 'gpu':
             backend = 'nccl'
         elif self.args.accelerator == 'cpu':
             backend = 'gloo'
+            self.args.precision = 'float32' #force float32 for cpu
         elif self.args.accelerator == 'auto':
             backend = 'nccl' if torch.cuda.is_available() else 'gloo'
         else:

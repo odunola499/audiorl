@@ -13,6 +13,7 @@ class DPOTrainer(BaseTrainer):
                  model,
                  loaders:Union[Tuple[DataLoader], DataLoader],
                  train_config:DPOConfig,
+                 ref_model = None
                  ):
         super().__init__(
             model = model,
@@ -20,10 +21,14 @@ class DPOTrainer(BaseTrainer):
             args = train_config,
         )
         self.args = train_config
-        if not self.args.ref_model:
-            self.ref_model = get_model(self.model.model_name, size=self.model.model_size)().eval()
+
+        if ref_model is None:
+            if not self.args.ref_model:
+                self.ref_model = get_model(self.model.model_name, size=self.model.model_size)().eval()
+            else:
+                self.ref_model = get_model(self.args.ref_model, size=self.model.model_size)().eval()
         else:
-            self.ref_model = get_model(self.args.ref_model, size=self.model.model_size)().eval()
+            self.ref_model = ref_model.eval()
 
 
         self.pad_token_id = self.model.pad_token_id
@@ -61,7 +66,8 @@ class DPOTrainer(BaseTrainer):
 
     def compute_ref_log_probs(self, batch):
         with torch.no_grad():
-            ref_model_output = self.concatenated_forward(batch, is_ref_model=True)
+            with torch.amp.autocast(device_type='cuda',enabled = (self.args.precision == 'bf16_mixed')):
+                ref_model_output = self.concatenated_forward(batch, is_ref_model=True)
         return ref_model_output['chosen_logps'], ref_model_output['rejected_logps']
 
     def concatenated_forward(self,batch = None, is_ref_model:bool = False, logits:torch.FloatTensor = None, labels:torch.LongTensor = None) -> dict:
@@ -73,8 +79,7 @@ class DPOTrainer(BaseTrainer):
         num_examples = batch['chosen_input_ids'].shape[0]
         concatenated_batch = self.concatenated_inputs(batch, padding_value=self.pad_token_id)
 
-        model_kwargs = {'use_cache':False}
-        model_kwargs['audio_features'] = concatenated_batch['audio_features']
+        model_kwargs = {'use_cache': False, 'audio_features': concatenated_batch['audio_features']}
 
         completion_input_ids = concatenated_batch['completion_input_ids']
         completion_attention_mask = concatenated_batch['completion_attention_mask']
@@ -97,17 +102,33 @@ class DPOTrainer(BaseTrainer):
 
         model_kwargs['attention_mask'] = attention_mask
 
+        model_output = None
         if is_ref_model:
-            with torch.no_grad():
+            if self.device.type == 'cpu':
+                with torch.no_grad():
+                    model_output = model(
+                        input_ids = input_ids,
+                        **model_kwargs,
+                    )
+            else:
+                with torch.amp.autocast(device_type='cuda',enabled = (self.args.precision == 'bf16_mixed')):
+                    with torch.no_grad():
+                        model_output = model(
+                            input_ids = input_ids,
+                            **model_kwargs,
+                        )
+        else:
+            if self.device.type == 'cpu':
                 model_output = model(
                     input_ids = input_ids,
                     **model_kwargs,
                 )
-        else:
-            model_output = model(
-                input_ids = input_ids,
-                **model_kwargs,
-            )
+            else:
+                with torch.cuda.amp.autocast(enabled=(self.args.precision == 'bf16_mixed')):
+                    model_output = model(
+                        input_ids = input_ids,
+                        **model_kwargs,
+                    )
 
         logits = model_output.logits
         labels = torch.roll(
@@ -210,14 +231,15 @@ class DPOTrainer(BaseTrainer):
 
 
     def train_step(self, batch):
-        loss, metrics = self.compute_metrics(batch = batch)
-        #todo: logging to wandb or csv,
+        loss, metrics = self.compute_metrics(batch = batch, mode = 'train')
+        metrics['train/step'] = self.cur_step * (self.cur_epoch + 1)
         self.log(metrics)
         return loss
 
     def validation_step(self, batch):
         with torch.no_grad():
             loss, metrics = self.compute_metrics(batch = batch, mode = 'valid')
+        metrics['valid/step'] = self.cur_step * (self.cur_epoch + 1)
         self.log(metrics)
         return loss
 
