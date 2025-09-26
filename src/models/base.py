@@ -26,10 +26,20 @@ class GenerationOutput:
 
 @dataclass
 class FeaturesRequest:
-    input_features:torch.FloatTensor = None
+    audio_features:torch.FloatTensor = None
     input_ids:torch.LongTensor = None
     text_attention_mask:torch.LongTensor = None
     audio_attention_mask:torch.LongTensor = None
+
+@dataclass
+class DPOFeaturesRequest:
+    audio_features:torch.FloatTensor
+    prompt_input_ids:torch.LongTensor = None
+    prompt_attention_mask:torch.LongTensor = None
+    chosen_input_ids:torch.LongTensor = None
+    chosen_attention_mask:torch.LongTensor = None
+    rejected_input_ids:torch.LongTensor = None
+    rejected_attention_mask:torch.LongTensor = None
 
 class ASRBaseModel(ABC, nn.Module):
 
@@ -37,8 +47,10 @@ class ASRBaseModel(ABC, nn.Module):
     def forward(self,
                 input_ids:torch.Tensor = None,
                 attention_mask:torch.Tensor = None,
-                audio_features:torch.Tensor = None) -> ModelForwardOutput:
+                audio_features:torch.Tensor = None,
+                compute_log_probs:bool = False) -> ModelForwardOutput:
         """Forward Function"""
+        # Remember to clamp logits to match seq len of input_ids if model concatenated audio and text embeds
         pass
 
     @abstractmethod
@@ -53,4 +65,53 @@ class ASRBaseModel(ABC, nn.Module):
     @abstractmethod
     def compute_features(self, arrays:List[np.ndarray], texts:List[str] = None) -> FeaturesRequest:
         """Convert audio and text to audio features, input_ids attention mask, text is expected to already have been formatted to prompt template"""
+        pass
+
+    @property
+    @abstractmethod
+    def model_name(self):
+        """Name Associated with model"""
+        pass
+
+    @property
+    @abstractmethod
+    def pad_token_id(self):
+        """Pad token id"""
+        pass
+
+    @property
+    @abstractmethod
+    def pad_token(self):
+        """Pad token id"""
+        pass
+
+    @property
+    @abstractmethod
+    def eos_token_id(self):
+        """Pad token id"""
+        pass
+
+    @property
+    @abstractmethod
+    def bos_token_id(self):
+        """Pad token id"""
+        pass
+
+    @property
+    @abstractmethod
+    def eos_token(self):
+        """Pad token id"""
+        pass
+
+    @property
+    @abstractmethod
+    def bos_token(self):
+        """Pad token id"""
+        pass
+
+
+    @property
+    @abstractmethod
+    def model_size(self):
+        """Model size"""
         pass
