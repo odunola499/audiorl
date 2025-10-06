@@ -3,18 +3,36 @@ from torch import nn
 from torch.nn import functional as F
 from src.trainers import BaseTrainer
 from src.configs import DPOConfig
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
 from src.models import get_model
 from src.utils import pad_to_length
 from torch.utils.data import DataLoader
+from src.models import PolicyModel, ReferenceModel
 
 class DPOTrainer(BaseTrainer):
     def __init__(self,
-                 model,
+                 model:PolicyModel,
                  loaders:Union[Tuple[DataLoader], DataLoader],
                  train_config:DPOConfig,
-                 ref_model = None
+                 ref_model:Optional[PolicyModel, ReferenceModel] = None
                  ):
+        """
+        Trainer for Direct Preference Optimization (DPO)
+        loaders can be any iterator that yields batches of the following format:
+        {
+            'audio_features': torch.FloatTensor, # (batch_size, feature_dim, time_steps,
+            'prompt_input_ids': Optional[torch.LongTensor], # (batch_size, prompt_length) or None
+            'prompt_attention_mask: Optional[torch.LongTensor], # (batch_size, prompt_length) or None
+            'chosen_input_ids': torch.LongTensor, # (batch_size, completion_length),
+            'chosen_attention_mask': torch.LongTensor, # (batch_size, completion_length),
+            'rejected_input_ids': torch.LongTensor, # (batch_size, completion_length),
+            'rejected_attention_mask': torch.LongTensor, # (batch_size, completion_length),
+        }
+        :param model:
+        :param loaders:
+        :param train_config:
+        :param ref_model:
+        """
         super().__init__(
             model = model,
             loaders = loaders,
@@ -174,7 +192,6 @@ class DPOTrainer(BaseTrainer):
 
         logits = logratios - ref_logratios
 
-        assert loss_type == 'sigmoid', 'Only sigmoid is currently supported'
         losses = (
                 -F.logsigmoid(self.args.beta * logits) * (1 - self.args.label_smoothing)
                 - F.logsigmoid(-self.args.beta * logits) * self.args.label_smoothing

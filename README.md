@@ -31,9 +31,10 @@ Sometime in the future, we would support online RL techniques, speech output mod
 #### Tuning Techniques
 - [x] [Direct Preference Optimization](https://arxiv.org/abs/2305.18290)
 - [ ] [Mixed Preference Optimization](https://huggingface.co/papers/2411.10442)
-- [ ] [Grouped Reward Policy Optimization](https://arxiv.org/abs/2402.03300)
+- [ ] [Anchored Preference Optimization](https://arxiv.org/abs/2402.03300)
 
 #### Dataset Preparation
+- [ ] Contrastive Off-Policy Dataset Preparation
 - [ ] Pairwise Preference Dataset
 - [ ] Reward Shaping Dataset
 

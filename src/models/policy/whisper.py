@@ -1,5 +1,5 @@
 import numpy as np
-from src.models.base import (ASRBaseModel,
+from src.models.base import (PolicyModel,
                              ModelForwardOutput,
                              GenerationOutput,
                              GenerationInput,
@@ -17,7 +17,7 @@ model_sizes = {
     'medium':'openai/whisper-medium',
     'large': 'openai/whisper-large-v3'
 }
-class WhisperModel(ASRBaseModel):
+class WhisperModel(PolicyModel):
     def __init__(self, size:str):
         super().__init__()
         if size not in ['small', 'medium', 'large']:
@@ -48,7 +48,9 @@ class WhisperModel(ASRBaseModel):
                  input_ids:Tensor = None,
                  attention_mask:Tensor = None,
                  audio_features:Tensor = None,
-                 gen_inputs: GenerationInput = None
+                 gen_inputs: GenerationInput = None,
+                audio:Optional[List[bytes]] = None,
+                 prompt:Optional[List[str]] = None
                  ):
 
         if gen_inputs is None:
@@ -56,6 +58,33 @@ class WhisperModel(ASRBaseModel):
                 temperature= 1,
                 do_sample=False
             )
+
+        if audio is not None:
+            if isinstance(audio, bytes):
+                array = [self.bytes_to_array(audio, self.feature_extractor.sampling_rate)]
+            elif isinstance(audio, list):
+                array = [self.bytes_to_array(a, self.feature_extractor.sampling_rate) for a in audio]
+            else:
+                raise ValueError("Audio must be bytes or list of bytes")
+
+            if not gen_inputs:
+                gen_inputs = GenerationInput()
+
+            inputs = self.feature_extractor(array, return_tensors="pt")
+            input_features = inputs.input_features.to(self.device)
+
+            generated_ids = self.model.generate(input_features=input_features,
+                                                max_length=448,
+                                                temperature=gen_inputs.temperature,
+                                                do_sample=gen_inputs.do_sample,
+                                                top_k=gen_inputs.top_k,
+                                                num_beams=gen_inputs.num_beams)
+
+            transcription = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+            return GenerationOutput(
+                texts = transcription
+            )
+
 
         outputs = self.model.generate(
             input_features=audio_features,
@@ -72,6 +101,8 @@ class WhisperModel(ASRBaseModel):
             sequences=outputs.sequences,
             hidden_states=getattr(outputs, "hidden_states", None),
         )
+
+
 
     def compute_features(self, arrays:List[np.ndarray], texts:List[str] = None) -> FeaturesRequest:
         audio_features = self.feature_extractor(arrays, return_tensors = 'pt').input_features

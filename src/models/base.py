@@ -2,8 +2,11 @@ import torch
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from torch import nn
-from typing import Union, List
+from typing import Union, List, Optional
 import numpy as np
+from io import BytesIO
+import soundfile as sf
+import librosa
 
 @dataclass
 class ModelForwardOutput:
@@ -12,17 +15,18 @@ class ModelForwardOutput:
 
 @dataclass
 class GenerationInput:
-    temperature:int = None
-    do_sample:bool = True
-    top_k:int = None
+    temperature:int = 0
+    do_sample:bool = False
+    top_k:int = 1
     max_length:int = 100
     num_beams:int = 2
 
 
 @dataclass
 class GenerationOutput:
-    sequences:torch.LongTensor
+    sequences:torch.LongTensor = None
     hidden_states:torch.FloatTensor = None
+    texts: List[str] = None
 
 @dataclass
 class FeaturesRequest:
@@ -41,7 +45,23 @@ class DPOFeaturesRequest:
     rejected_input_ids:torch.LongTensor = None
     rejected_attention_mask:torch.LongTensor = None
 
-class ASRBaseModel(ABC, nn.Module):
+class ReferenceModel(ABC):
+
+    def __init__(self, tokenizer, **kwargs):
+        self.tokenizer = tokenizer
+
+    @abstractmethod
+    def generate(self, audio:Union[bytes, List[bytes]], prompt:Optional[List[str]], generation_params:GenerationInput = None) -> Union[List[str], str]:
+        pass
+
+    def bytes_to_array(self, bytes, sample_rate):
+        audio = BytesIO(bytes)
+        array, sr = sf.read(audio)
+        if sr != sample_rate:
+            array = librosa.resample(array.T, orig_sr=sr, target_sr=sample_rate).T
+        return array
+
+class PolicyModel(ABC, nn.Module):
 
     @abstractmethod
     def forward(self,
@@ -58,9 +78,13 @@ class ASRBaseModel(ABC, nn.Module):
                  input_ids:torch.Tensor = None,
                  attention_mask:torch.Tensor = None,
                  audio_features:torch.Tensor = None,
-                 gen_inputs:GenerationInput = None) -> GenerationOutput:
+                 gen_inputs:GenerationInput = None,
+                 audio:Union[bytes, List[bytes]] = None,
+                 prompt:Optional[List[str]] = None
+                 ) -> GenerationOutput:
         """Generation Function"""
         pass
+
 
     @abstractmethod
     def compute_features(self, arrays:List[np.ndarray], texts:List[str] = None) -> FeaturesRequest:
