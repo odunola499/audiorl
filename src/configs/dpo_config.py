@@ -9,3 +9,5 @@ class DPOConfig(TrainArgs):
     beta:float = 0.1
     """Hyperparameter: Temperature scaling factor to control how strong the model is pushed to
         prefer chosen responses over rejected ones. Higher values increase the preference for chosen responses."""
+    label_smoothing: float = 0.1
+    """Label smoothing factor for loss calculation."""

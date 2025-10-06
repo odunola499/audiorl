@@ -114,7 +114,7 @@ class TrainArgs:
 
 
 @dataclass
-class DataConfig:
+class DataArgs:
     """Configuration for dataset columns used in training."""
 
     prompt_text_column: str = 'prompt'
@@ -125,3 +125,7 @@ class DataConfig:
 
     rejected_text_column: str = 'rejected'
     """Name of the column with rejected/comparison responses."""
+    sample_rate: int = 16000
+    """Audio sample rate for processing."""
+    test_size:float = 0.2
+    """Fraction of strategies to use for testing/validation."""

@@ -2,7 +2,7 @@ import os
 import torch
 from abc import ABC, abstractmethod
 from torch import nn
-from src.models import ASRBaseModel
+from src.models import PolicyModel
 from typing import  Union, Tuple, Literal
 from src.configs import DPOConfig as DPOArguments
 from src.trainers import OPTIMIZERS, SCHEDULERS
@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 from src.loggers import WandbLogger, CSVLogger
+
 
 
 def _build_distributed_loader(loader: DataLoader, mode="train"):
@@ -30,7 +31,7 @@ def _build_distributed_loader(loader: DataLoader, mode="train"):
 
 class BaseTrainer(ABC):
     def __init__(self,
-                 model:ASRBaseModel,
+                 model:PolicyModel,
                  loaders:Union[Tuple[DataLoader], DataLoader],
                  args:DPOArguments,
                  ):
