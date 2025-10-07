@@ -1,15 +1,16 @@
 import torch
-from dataclasses import dataclass
-from typing import List, Literal
+from dataclasses import dataclass, asdict
+from typing import Union, Literal
 from datetime import datetime
 
 
 @dataclass
 class ModelConfig:
     """Configuration for model architecture and parameters.
-
     """
-    pass
+    def to_dict(self):
+        return asdict(self)
+
 
 
 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -28,8 +29,8 @@ class TrainArgs:
     precision: Literal['bf16_mixed', 'float32'] = 'float32'
     """Numerical precision used during training."""
 
-    devices: List[int] = -1
-    """Which devices (GPU indices) to use. -1 means use all available devices."""
+    devices: Union[str, int] = 'auto'
+    """Which devices (GPU indices) to use. auto means use all available devices."""
 
     num_epochs: int = 1
     """Number of full passes through the dataset."""
@@ -49,7 +50,7 @@ class TrainArgs:
     save_every: int = 1000
     """How often (in steps) to save checkpoints."""
 
-    snapshot_path: str = f'./checkpoints_{now_str}.ckpt'
+    snapshot_path: str = f'./checkpoints_{now_str}'
     """Default path for saving checkpoint snapshots."""
 
     save_num_checkpoints: int = 1
@@ -112,6 +113,9 @@ class TrainArgs:
     wandb_entity: str = None
     """Weights & Biases entity (team or username)."""
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class DataArgs:
@@ -129,3 +133,6 @@ class DataArgs:
     """Audio sample rate for processing."""
     test_size:float = 0.2
     """Fraction of strategies to use for testing/validation."""
+
+    def to_dict(self):
+        return asdict(self)

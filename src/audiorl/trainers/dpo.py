@@ -1,20 +1,21 @@
 import torch
-from torch import nn
 from torch.nn import functional as F
-from src.trainers import BaseTrainer
-from src.configs import DPOConfig
-from typing import Union, Tuple, Optional
-from src.models import get_model
-from src.utils import pad_to_length
+from src.audiorl.trainers.base import BaseModule
+from src.audiorl.configs import DPOArgs
+from typing import Optional
+from src.audiorl.models import get_model
+from src.audiorl.utils import pad_to_length
 from torch.utils.data import DataLoader
-from src.models import PolicyModel, ReferenceModel
+from src.audiorl.models import PolicyModel, ReferenceModel
 
-class DPOTrainer(BaseTrainer):
+class DPOModule(BaseModule):
     def __init__(self,
                  model:PolicyModel,
-                 loaders:Union[Tuple[DataLoader], DataLoader],
-                 train_config:DPOConfig,
-                 ref_model:Optional[PolicyModel, ReferenceModel] = None
+                 train_loader:DataLoader,
+                 train_config:DPOArgs,
+                 ref_model:Optional[PolicyModel, ReferenceModel] = None,
+                 valid_loader:Optional[DataLoader] = None,
+                 test_loader:Optional[DataLoader] = None,
                  ):
         """
         Trainer for Direct Preference Optimization (DPO)
@@ -29,14 +30,18 @@ class DPOTrainer(BaseTrainer):
             'rejected_attention_mask': torch.LongTensor, # (batch_size, completion_length),
         }
         :param model:
-        :param loaders:
+        :param train_loader:
+        :param valid_loader:
+        :param test_loader:
         :param train_config:
         :param ref_model:
         """
         super().__init__(
             model = model,
-            loaders = loaders,
             args = train_config,
+            train_loader = train_loader,
+            valid_loader = valid_loader,
+            test_loader = test_loader
         )
         self.args = train_config
 
@@ -79,6 +84,11 @@ class DPOTrainer(BaseTrainer):
                 pad_to_length(batch['rejected_attention_mask'], max_completion_length, padding_value)
             ]
         )
+        output['chosen_labels'] = output['completion_input_ids'][:batch['chosen_input_ids'].shape[0]]
+
+        lengths = output['completion_attention_mask'].sum(dim = 1)
+        output['chosen_lengths'] = lengths[:batch['chosen_input_ids'].shape[0]]
+
         return output
 
 
@@ -88,7 +98,7 @@ class DPOTrainer(BaseTrainer):
                 ref_model_output = self.concatenated_forward(batch, is_ref_model=True)
         return ref_model_output['chosen_logps'], ref_model_output['rejected_logps']
 
-    def concatenated_forward(self,batch = None, is_ref_model:bool = False, logits:torch.FloatTensor = None, labels:torch.LongTensor = None) -> dict:
+    def concatenated_forward(self,batch = None, is_ref_model:bool = False) -> dict:
         if is_ref_model:
             model = self.ref_model
         else:
@@ -155,7 +165,6 @@ class DPOTrainer(BaseTrainer):
         loss_mask = torch.roll(
             loss_mask, shifts = -1, dims = 1
         ).bool()
-
         if logits.shape[:2] != labels.shape:
             seq_len = labels.shape[1]
             logits = logits[:, -seq_len:, :]
@@ -167,15 +176,18 @@ class DPOTrainer(BaseTrainer):
 
         all_logps = per_token_logps[:, 1:].sum(-1)
 
-        output = {}
-        output['chosen_logps'] = all_logps[:num_examples]
-        output['rejected_logps'] = all_logps[num_examples:]
+        output = {'chosen_logps': all_logps[:num_examples], 'rejected_logps': all_logps[num_examples:]}
 
         mean_chosen_logits = logits[:num_examples][loss_mask[:num_examples]].mean()
         mean_rejected_logits = logits[num_examples:][loss_mask[num_examples:]].mean()
 
         output['mean_chosen_logits'] = mean_chosen_logits
         output['mean_rejected_logits'] = mean_rejected_logits
+
+        if not is_ref_model:
+            output['chosen_labels'] = concatenated_batch['chosen_labels'][:, 1:]
+            output['chosen_logits'] = logits[:num_examples][:, :-1, :]
+            output['chosen_lengths'] = concatenated_batch['chosen_lengths']
 
         return output
 
@@ -184,45 +196,37 @@ class DPOTrainer(BaseTrainer):
                  rejected_logps:torch.FloatTensor,
                  ref_chosen_logps:torch.FloatTensor,
                  ref_rejected_logps:torch.FloatTensor,
-                 loss_type:str = 'sigmoid',
-                 model_output:dict = None) -> tuple:
+                 return_rewards = True
+                 ) -> tuple:
 
         logratios = chosen_logps - rejected_logps
         ref_logratios = ref_chosen_logps - ref_rejected_logps
-
         logits = logratios - ref_logratios
-
         losses = (
                 -F.logsigmoid(self.args.beta * logits) * (1 - self.args.label_smoothing)
                 - F.logsigmoid(-self.args.beta * logits) * self.args.label_smoothing
             )
 
+        if not return_rewards:
+            return losses, None, None
         chosen_rewards = (self.args.beta * chosen_logps) - ref_chosen_logps.detach()
         rejected_rewards = (self.args.beta * rejected_logps) - ref_rejected_logps.detach()
 
         return losses, chosen_rewards, rejected_rewards
 
 
-    def compute_metrics(self, model:nn.Module = None, batch = None, model_output = None, mode = 'train'):
+    def compute_metrics(self, batch ,mode = 'train'):
         metrics = {}
-
-        if batch:
-            model_output = self.concatenated_forward(batch, is_ref_model = False) #pass one
-        else:
-            if model_output is None:
-                raise ValueError('Either batch or model_output must be provided')
+        model_output = self.concatenated_forward(batch, is_ref_model = False) #pass one
 
         with torch.no_grad():
             ref_chosen_logps, ref_rejected_logps = self.compute_ref_log_probs(batch) # pass two
-
-
 
         losses, chosen_rewards, rejected_rewards =self.dpo_loss(
             model_output['chosen_logps'],
             model_output['rejected_logps'],
             ref_chosen_logps,
             ref_rejected_logps,
-            model_output = model_output
         )
 
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
@@ -250,14 +254,14 @@ class DPOTrainer(BaseTrainer):
     def train_step(self, batch):
         loss, metrics = self.compute_metrics(batch = batch, mode = 'train')
         metrics['train/step'] = self.cur_step * (self.cur_epoch + 1)
-        self.log(metrics)
+        self.log_dict(**metrics)
         return loss
 
     def validation_step(self, batch):
         with torch.no_grad():
             loss, metrics = self.compute_metrics(batch = batch, mode = 'valid')
         metrics['valid/step'] = self.cur_step * (self.cur_epoch + 1)
-        self.log(metrics)
+        self.log_dict(**metrics)
         return loss
 
 

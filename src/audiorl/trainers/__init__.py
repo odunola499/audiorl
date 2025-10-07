@@ -1,7 +1,8 @@
 import torch
 from bitsandbytes import optim as bnb_optim
-from src.trainers.base import BaseTrainer
-from src.optimization import get_cosine_schedule_with_warmup_by_tokens
+from src.audiorl.trainers.base_depreciated import BaseTrainer
+from src.audiorl.optimization import get_cosine_schedule_with_warmup_by_tokens
+from .utils import RunningMoments
 from transformers import get_cosine_schedule_with_warmup
 
 

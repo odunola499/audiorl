@@ -1,4 +1,4 @@
-from src.models.base import ReferenceModel, GenerationInput
+from src.audiorl.models.base import ReferenceModel, GenerationInput
 from typing import Optional,Union, List
 from transformers import WhisperForConditionalGeneration, AutoFeatureExtractor
 import torch

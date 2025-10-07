@@ -1,11 +1,10 @@
 import numpy as np
-from src.models.base import (PolicyModel,
-                             ModelForwardOutput,
-                             GenerationOutput,
-                             GenerationInput,
-                             FeaturesRequest,
-                             DPOFeaturesRequest)
-from typing import Literal, List
+from src.audiorl.models.base import (PolicyModel,
+                                     ModelForwardOutput,
+                                     GenerationOutput,
+                                     GenerationInput,
+                                     FeaturesRequest,
+                                     DPOFeaturesRequest)
 from transformers import WhisperForConditionalGeneration, AutoTokenizer, AutoFeatureExtractor
 
 from typing import List, Optional

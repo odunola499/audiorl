@@ -1,20 +1,20 @@
 import os
 import torch
 from abc import ABC, abstractmethod
-from torch import nn
-from src.models import PolicyModel
+from src.audiorl.models import PolicyModel
 from typing import  Union, Tuple, Literal
-from src.configs import DPOConfig as DPOArguments
-from src.trainers import OPTIMIZERS, SCHEDULERS
+from src.audiorl.configs import DPOArgs as DPOArguments
+from src.audiorl.trainers import OPTIMIZERS, SCHEDULERS
 
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
-from src.loggers import WandbLogger, CSVLogger
+from src.audiorl.loggers import WandbLogger, CSVLogger
 
-
-
+"""
+DEPRECIATED: Please use the Lightning based Trainer
+"""
 def _build_distributed_loader(loader: DataLoader, mode="train"):
     sampler = DistributedSampler(loader.dataset, shuffle=(mode == "train"))
     new_loader = DataLoader(
@@ -68,8 +68,7 @@ class BaseTrainer(ABC):
         pass
 
     @abstractmethod
-    def compute_metrics(self, model: nn.Module = None, batch=None, model_output=None,
-                        mode: Literal['train', 'valid', 'test'] = 'valid') -> dict:
+    def compute_metrics(self, batch, mode: Literal['train', 'valid', 'test'] = 'valid') -> dict:
         pass
     
     
@@ -184,7 +183,6 @@ class BaseTrainer(ABC):
 
         self.optimizer = optimizer
         self.scheduler = scheduler
-
 
 
     def setup_train_dataloader(self, train_loader):

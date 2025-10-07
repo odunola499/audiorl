@@ -1,7 +1,7 @@
 from typing import List, Union
 import numpy as np
 from .data_generation_base import BaseDataGenerator, PreferenceDataPoint, GenerationConfig
-from src.models.base import PolicyModel, ReferenceModel
+from src.audiorl.models.base import PolicyModel, ReferenceModel
 
 class PolicyVsReferenceGenerator(BaseDataGenerator):
     """

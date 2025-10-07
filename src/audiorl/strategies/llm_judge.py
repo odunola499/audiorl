@@ -1,7 +1,7 @@
 from typing import List, Callable, Optional
 import numpy as np
 from data_generation_base import BaseDataGenerator, PreferenceDataPoint, GenerationConfig
-from src.models.base import GenerationInput
+from src.audiorl.models.base import GenerationInput
 
 class LLMJudgeGenerator(BaseDataGenerator):
     """

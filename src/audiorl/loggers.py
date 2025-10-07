@@ -2,9 +2,12 @@ import os
 import csv
 import numpy as np
 from abc import ABC, abstractmethod
-from src.configs import TrainArgs
+from src.audiorl.configs import TrainArgs
 from typing import List
 
+"""
+DEPRECIATED
+"""
 class BaseLogger(ABC):
     def __init__(self, args:TrainArgs, **kwargs):
         self.args = args

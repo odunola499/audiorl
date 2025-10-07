@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Union
+from typing import List, Union
 import numpy as np
 from dataclasses import dataclass
-from src.models.base import PolicyModel, ReferenceModel
+from src.audiorl.models.base import PolicyModel, ReferenceModel
 
 @dataclass
 class PreferenceDataPoint:

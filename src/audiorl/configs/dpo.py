@@ -1,7 +1,7 @@
-from src.configs import TrainArgs
+from src.audiorl.configs import TrainArgs
 from typing import Optional
 
-class DPOConfig(TrainArgs):
+class DPOArgs(TrainArgs):
     """Training configuration arguments for DPO, inherits from TrainArgs.
         """
     ref_model: Optional[str] = None
