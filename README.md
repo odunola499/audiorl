@@ -25,7 +25,7 @@ Sometime in the future, we would support online RL techniques, speech output mod
 
 #### Models
 - [x] [Whisper](https://cdn.openai.com/papers/whisper.pdf)
-- [ ] [Qwen2 Audio](https://arxiv.org/abs/2407.10759)
+- [x] [Qwen2 Audio](https://arxiv.org/abs/2407.10759)
 - [ ] [Stepfun Audio](https://arxiv.org/abs/2506.08967)
 
 #### Tuning Techniques
